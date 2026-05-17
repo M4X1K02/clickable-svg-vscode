@@ -1,0 +1,90 @@
+{
+  "name": "clickable-svg-vscode",
+  "displayName": "Clickable SVG Viewer",
+  "publisher": "clickable-svg-local",
+  "license": "MIT",
+  "description": "SVG viewer that supports clickable relative links to open files in VS Code.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCustomEditor:clickableSvg.svgEditor"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "clickableSvg.svgEditor",
+        "displayName": "Clickable SVG Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.svg"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "clickableSvg.allowScripts",
+        "title": "SVG: Allow Scripts",
+        "category": "Clickable SVG"
+      }
+    ],
+    "configuration": [
+      {
+        "title": "Clickable SVG",
+        "properties": {
+          "clickableSvg.scriptPolicy": {
+            "type": "string",
+            "default": "prompt",
+            "enum": [
+              "strict",
+              "prompt",
+              "permissive"
+            ],
+            "enumDescriptions": [
+              "Never allow inline scripts in the SVG preview (no prompts). Safest.",
+              "Prompt once per session when an SVG contains scripts; widen CSP only if you confirm.",
+              "Always allow inline scripts in the SVG preview. Unsafe for untrusted workspaces."
+            ],
+            "markdownDescription": "How embedded `<script>` tags inside SVG previews are handled. **permissive** is unsafe if you open SVGs from untrusted sources.",
+            "scope": "window"
+          },
+          "clickableSvg.externalLinkPolicy": {
+            "type": "string",
+            "default": "block",
+            "enum": [
+              "block",
+              "openExternal"
+            ],
+            "enumDescriptions": [
+              "Show a warning and do not open `http`/`https` links from SVG anchors.",
+              "Open `http`/`https` links in the system browser."
+            ],
+            "markdownDescription": "Behavior when clicking an SVG link with an `http://` or `https://` URL.",
+            "scope": "window"
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vsix": "npm run compile && vsce package --allow-missing-repository",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "18.x",
+    "@vscode/vsce": "^3.2.2",
+    "typescript": "^5.1.3"
+  }
+}
