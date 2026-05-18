@@ -8,6 +8,7 @@
   },
   "license": "MIT",
   "description": "SVG viewer that supports clickable relative links to open files in VS Code.",
+  "icon": "images/icon.png",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.80.0"
