@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 560" width="820" height="560">
+  <defs>
+    <style><![CDATA[
+      .title { font: bold 20px sans-serif; fill: #1a1a1a; }
+      .subtitle { font: 12px sans-serif; fill: #444; }
+      .label { font: bold 14px sans-serif; }
+      .hint { font: 11px sans-serif; fill: #555; }
+      .link-text { font: 13px sans-serif; fill: #fff; pointer-events: none; }
+      .panel-working { fill: #e8f5e9; stroke: #2e7d32; stroke-width: 2; }
+      .panel-blocked { fill: #ffebee; stroke: #c62828; stroke-width: 2; }
+      .btn-working { fill: #2e7d32; }
+      .btn-blocked { fill: #c62828; }
+      .btn-settings { fill: #e65100; }
+      .divider { stroke: #999; stroke-width: 1; stroke-dasharray: 6 4; }
+    ]]></style>
+  </defs>
+
+  <rect width="820" height="560" fill="#fafafa"/>
+  <text x="410" y="32" class="title" text-anchor="middle">Clickable SVG - link matrix</text>
+  <text x="410" y="52" class="subtitle" text-anchor="middle">Left: opens in editor | Right: blocked or depends on settings</text>
+
+  <line x1="410" y1="68" x2="410" y2="540" class="divider"/>
+
+  <rect x="20" y="72" width="370" height="468" rx="8" class="panel-working"/>
+  <text x="205" y="98" class="label" text-anchor="middle" fill="#1b5e20">Working links</text>
+  <text x="205" y="116" class="hint" text-anchor="middle">Relative paths inside workspace</text>
+
+  <a href="../README.md">
+    <rect x="40" y="132" width="330" height="44" rx="6" class="btn-working"/>
+    <text x="205" y="160" class="link-text" text-anchor="middle">../README.md</text>
+  </a>
+  <text x="40" y="188" class="hint">Opens project readme</text>
+
+  <a href="../package.json">
+    <rect x="40" y="200" width="330" height="44" rx="6" class="btn-working"/>
+    <text x="205" y="228" class="link-text" text-anchor="middle">../package.json</text>
+  </a>
+  <text x="40" y="256" class="hint">Opens extension manifest</text>
+
+  <a href="../src/extension.ts">
+    <rect x="40" y="268" width="330" height="44" rx="6" class="btn-working"/>
+    <text x="205" y="296" class="link-text" text-anchor="middle">../src/extension.ts</text>
+  </a>
+  <text x="40" y="324" class="hint">Opens TypeScript entry point</text>
+
+  <a href="../LICENSE">
+    <rect x="40" y="336" width="330" height="44" rx="6" class="btn-working"/>
+    <text x="205" y="364" class="link-text" text-anchor="middle">../LICENSE</text>
+  </a>
+  <text x="40" y="392" class="hint">Opens license file</text>
+
+  <a href="../README.md#features">
+    <rect x="40" y="404" width="330" height="44" rx="6" class="btn-working"/>
+    <text x="205" y="432" class="link-text" text-anchor="middle">../README.md#features</text>
+  </a>
+  <text x="40" y="460" class="hint">Fragment preserved on open</text>
+
+  <text x="205" y="510" class="hint" text-anchor="middle">No setting required</text>
+
+  <rect x="430" y="72" width="370" height="468" rx="8" class="panel-blocked"/>
+  <text x="615" y="98" class="label" text-anchor="middle" fill="#b71c1c">Blocked / settings</text>
+  <text x="615" y="116" class="hint" text-anchor="middle">Click to see warning or behavior change</text>
+
+  <a href="https://google.com">
+    <rect x="450" y="132" width="330" height="44" rx="6" class="btn-settings"/>
+    <text x="615" y="160" class="link-text" text-anchor="middle">https://google.com</text>
+  </a>
+  <text x="450" y="188" class="hint">clickableSvg.externalLinkPolicy</text>
+  <text x="450" y="202" class="hint">block (default) or openExternal for browser</text>
+
+  <a href="vscode://command/workbench.action.terminal.new">
+    <rect x="450" y="214" width="330" height="44" rx="6" class="btn-settings"/>
+    <text x="615" y="242" class="link-text" text-anchor="middle">vscode:// terminal.new</text>
+  </a>
+  <text x="450" y="270" class="hint">clickableSvg.blockSchemeLinks (default: true)</text>
+
+  <a href="/etc/passwd">
+    <rect x="450" y="282" width="330" height="44" rx="6" class="btn-settings"/>
+    <text x="615" y="310" class="link-text" text-anchor="middle">/etc/passwd</text>
+  </a>
+  <text x="450" y="338" class="hint">clickableSvg.blockAbsolutePaths (default: true)</text>
+  <text x="450" y="352" class="hint">false: still blocked if outside workspace</text>
+
+  <a href="../../../etc/passwd">
+    <rect x="450" y="364" width="330" height="44" rx="6" class="btn-blocked"/>
+    <text x="615" y="392" class="link-text" text-anchor="middle">../../../etc/passwd</text>
+  </a>
+  <text x="450" y="420" class="hint">Always blocked (directory traversal)</text>
+
+  <a href="http://example.com/?a=1&amp;calc.exe">
+    <rect x="450" y="432" width="330" height="44" rx="6" class="btn-settings"/>
+    <text x="615" y="460" class="link-text" text-anchor="middle">http://example.com/ (query)</text>
+  </a>
+  <text x="450" y="488" class="hint">Same policy as https (externalLinkPolicy)</text>
+
+  <text x="615" y="522" class="hint" text-anchor="middle">Orange = settings | Red = traversal only</text>
+</svg>
