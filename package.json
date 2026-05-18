@@ -54,19 +54,19 @@
               "Show a warning and do nothing when an SVG link points to an http/https URL.",
               "Open http/https links in the system default browser."
             ],
-            "markdownDescription": "How `http`/`https` links inside SVG previews are handled.",
+            "markdownDescription": "How `http`/`https` links inside SVG previews are handled. In Restricted Mode, links always stay blocked.",
             "scope": "window"
           },
           "clickableSvg.blockAbsolutePaths": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "When enabled, SVG links that use absolute filesystem paths (e.g. `/etc/passwd`) are blocked. Relative links and workspace traversal rules still apply when disabled.",
+            "markdownDescription": "When enabled, SVG links that use absolute filesystem paths (e.g. `/etc/passwd`) are blocked. Relative links and workspace traversal rules still apply when disabled. In Restricted Mode, absolute paths always stay blocked.",
             "scope": "window"
           },
           "clickableSvg.blockSchemeLinks": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "When enabled, non-http(s) URI schemes (`vscode://`, `file://`, etc.) are blocked. When disabled, they are opened via the extension host (not the webview). **Unsafe** for untrusted SVGs — `vscode://` links can run editor commands.",
+            "markdownDescription": "When enabled, non-http(s) URI schemes are blocked. When disabled, only `file:`, `mailto:`, and `tel:` may open (via the extension host). `vscode://` and `command:` are **always** blocked. In Restricted Mode, all scheme links stay blocked regardless of this setting.",
             "scope": "window"
           },
           "clickableSvg.scriptPolicy": {
@@ -82,7 +82,7 @@
               "Prompt once per session when an SVG contains scripts; widen CSP only if you confirm.",
               "Always allow inline scripts in the SVG preview. Unsafe for untrusted workspaces."
             ],
-            "markdownDescription": "How embedded `<script>` tags inside SVG previews are handled. **permissive** is unsafe if you open SVGs from untrusted sources.",
+            "markdownDescription": "How embedded `<script>` tags inside SVG previews are handled. **permissive** is unsafe if you open SVGs from untrusted sources. In Restricted Mode, scripts never run (`strict` behavior).",
             "scope": "window"
           }
         }

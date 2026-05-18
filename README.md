@@ -19,9 +19,11 @@ Links to files in your workspace open in the editor. If a link includes a `#sect
 | `./docs/guide.md` or `../src/app.ts` | Opens that file in VS Code |
 | `../readme.md#features` | Opens the file and keeps the `#…` part |
 | `https://example.com` | Blocked by default; can be changed to open your web browser |
-| `vscode://…` or other special links | Blocked by default (see settings below) |
+| `vscode://…` | Always blocked (`vscode://` can run editor commands) |
+| `file://…` | Blocked by default; if scheme links are unblocked, `file:` is allowlisted |
 | `/etc/passwd` or paths outside the project | Blocked by default |
 | `../../../` tricks to escape the project | Always blocked |
+| Symlinks pointing outside the workspace | Blocked after path resolution |
 
 If a link is blocked, VS Code shows a short warning instead of opening it.
 
@@ -34,7 +36,7 @@ Open **Settings**, search for **Clickable SVG**, and adjust:
 Controls whether animations or logic inside `<script>` tags in the SVG may run in the preview.
 
 - **strict** — Scripts never run; safest if you open SVGs from unknown sources.
-- **prompt** — You are asked once per session for each SVG that contains scripts.
+- **prompt** — You are asked once per open editor tab for each SVG that contains scripts; allowing scripts clears when you close that tab.
 - **permissive** — Scripts always run; only use this if you trust every SVG you open.
 
 **External link policy** (`block` / `openExternal`, default: `block`)
@@ -50,21 +52,23 @@ Blocks links that start at the root of your disk (e.g. `/etc/passwd`). Links mus
 
 **Block scheme links** (on by default)
 
-Blocks links that use special protocols (for example `vscode://` links that could run editor actions). Turning this off is risky for SVGs you did not create yourself.
+Blocks links that use special protocols. If you turn this off, only `file:`, `mailto:`, and `tel:` can open; `vscode://` and `command:` remain blocked.
 
 Open SVG tabs refresh when you change a setting.
 
 ## SVGs with scripts
 
-When **Script policy** is **prompt** and the file contains `<script>`, you will see a confirmation before anything runs.
+When **Script policy** is **prompt** and the file contains `<script>` (any casing), you will see a confirmation before anything runs.
 
-To allow scripts for the current file for the rest of your session, run **SVG: Allow Scripts** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
+To allow scripts for the **current tab**, run **SVG: Allow Scripts** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`). Closing the SVG tab clears that opt-in; reopening the file prompts again.
 
 ## Trust and safety
 
 Defaults are meant for everyday use, including SVGs from diagrams, exports, or downloads you have not fully vetted.
 
-Only relax **Block scheme links**, **Script policy**, or **External link policy** when you trust the SVG and its author.
+**Restricted Mode** (untrusted workspace): script policy behaves as **strict**, external and scheme links stay blocked, and absolute paths stay blocked — regardless of your settings.
+
+Only relax **Block scheme links**, **Script policy**, or **External link policy** when you trust the SVG and its author, and the workspace is trusted.
 
 ## License
 

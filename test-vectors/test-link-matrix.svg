@@ -72,7 +72,7 @@
     <rect x="450" y="214" width="330" height="44" rx="6" class="btn-settings"/>
     <text x="615" y="242" class="link-text" text-anchor="middle">vscode:// terminal.new</text>
   </a>
-  <text x="450" y="270" class="hint">clickableSvg.blockSchemeLinks (default: true)</text>
+  <text x="450" y="270" class="hint">vscode:// always blocked</text>
 
   <a href="/etc/passwd">
     <rect x="450" y="282" width="330" height="44" rx="6" class="btn-settings"/>

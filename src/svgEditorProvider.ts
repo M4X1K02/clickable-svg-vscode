@@ -2,12 +2,16 @@ import * as vscode from 'vscode';
 import {
     buildScriptCsp,
     classifyHref,
+    evaluateSchemeLink,
     getEffectiveAllowScripts as computeAllowScripts,
+    getEffectiveBlockAbsolutePaths,
+    getEffectiveExternalLinkPolicy,
+    getEffectiveScriptPolicy,
     isNonHttpSchemeHref,
     resolveRelativeSvgLink,
     shouldBlockExternalLink,
-    shouldBlockSchemeLinks,
     svgContainsScriptTag,
+    verifyResolvedPathInWorkspace,
 } from './linkSecurity';
 import { openHttpExternalHref } from './openExternalBrowser';
 import { openSchemeHref } from './openSchemeLink';
@@ -29,6 +33,10 @@ type ExternalLinkPolicy = 'block' | 'openExternal';
 const SCRIPT_POLICIES: readonly ScriptPolicy[] = ['strict', 'prompt', 'permissive'];
 const EXTERNAL_LINK_POLICIES: readonly ExternalLinkPolicy[] = ['block', 'openExternal'];
 
+function isWorkspaceTrusted(): boolean {
+    return vscode.workspace.isTrusted;
+}
+
 function readScriptPolicy(): ScriptPolicy {
     const raw = vscode.workspace.getConfiguration(CONFIG_SECTION).get<string>(KEY_SCRIPT_POLICY);
     return SCRIPT_POLICIES.includes(raw as ScriptPolicy) ? (raw as ScriptPolicy) : 'prompt';
@@ -45,6 +53,31 @@ function readBlockAbsolutePaths(): boolean {
 
 function readBlockSchemeLinks(): boolean {
     return vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(KEY_BLOCK_SCHEME_LINKS, true);
+}
+
+function effectiveScriptPolicy(): ScriptPolicy {
+    return getEffectiveScriptPolicy(readScriptPolicy(), isWorkspaceTrusted());
+}
+
+function effectiveExternalLinkPolicy(): ExternalLinkPolicy {
+    return getEffectiveExternalLinkPolicy(readExternalLinkPolicy(), isWorkspaceTrusted());
+}
+
+function effectiveBlockAbsolutePaths(): boolean {
+    return getEffectiveBlockAbsolutePaths(readBlockAbsolutePaths(), isWorkspaceTrusted());
+}
+
+function schemeLinkWarningMessage(href: string, reason: string): string {
+    switch (reason) {
+        case 'untrusted-workspace':
+            return `URI scheme links are blocked in Restricted Mode: ${href}`;
+        case 'dangerous-scheme':
+            return `This URI scheme is never allowed in SVG previews (vscode://, command://): ${href}`;
+        case 'not-allowlisted':
+            return `URI scheme not on the allowlist (file, mailto, tel): ${href}`;
+        default:
+            return `URI scheme links are blocked in SVG previews: ${href}`;
+    }
 }
 
 export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvider {
@@ -64,7 +97,7 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
 
     private static readonly viewType = 'clickableSvg.svgEditor';
 
-    /** Per-document opt-in when scriptPolicy is `prompt` */
+    /** Per-document opt-in when scriptPolicy is `prompt` (cleared when the editor tab closes). */
     private allowedScripts = new Set<string>();
 
     constructor(
@@ -87,17 +120,27 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
                 if (!e.affectsConfiguration(CONFIG_SECTION)) {
                     return;
                 }
-                for (const [uriStr, panel] of this.panels) {
-                    void this.updateWebview(panel, vscode.Uri.parse(uriStr));
-                }
+                this.refreshAllPanels();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.workspace.onDidGrantWorkspaceTrust(() => {
+                this.refreshAllPanels();
             })
         );
     }
 
     private panels = new Map<string, vscode.WebviewPanel>();
 
+    private refreshAllPanels(): void {
+        for (const [uriStr, panel] of this.panels) {
+            void this.updateWebview(panel, vscode.Uri.parse(uriStr));
+        }
+    }
+
     private getEffectiveAllowScripts(uri: vscode.Uri): boolean {
-        return computeAllowScripts(readScriptPolicy(), uri.toString(), this.allowedScripts);
+        return computeAllowScripts(effectiveScriptPolicy(), uri.toString(), this.allowedScripts);
     }
 
     public async openCustomDocument(
@@ -120,16 +163,18 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
             ]
         };
 
-        this.panels.set(document.uri.toString(), webviewPanel);
+        const documentKey = document.uri.toString();
+        this.panels.set(documentKey, webviewPanel);
 
         webviewPanel.onDidDispose(() => {
-            this.panels.delete(document.uri.toString());
+            this.panels.delete(documentKey);
+            this.allowedScripts.delete(documentKey);
         });
 
         webviewPanel.webview.onDidReceiveMessage(e => {
             switch (e.command) {
                 case MSG_OPEN_LINK:
-                    this.handleOpenLink(document.uri, e.href);
+                    void this.handleOpenLink(document.uri, e.href);
                     return;
                 case MSG_OPEN_EXTERNAL_LINK:
                     this.handleExternalLink(e.href);
@@ -138,7 +183,7 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
                     this.handleSchemeLink(e.href);
                     return;
                 case MSG_REQUEST_ALLOW_SCRIPTS:
-                    if (readScriptPolicy() !== 'prompt') {
+                    if (effectiveScriptPolicy() !== 'prompt') {
                         return;
                     }
                     vscode.window.showWarningMessage(
@@ -171,15 +216,16 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
             return;
         }
 
-        if (shouldBlockSchemeLinks(readBlockSchemeLinks())) {
+        const decision = evaluateSchemeLink(href, readBlockSchemeLinks(), isWorkspaceTrusted());
+        if (decision.action === 'block') {
             void vscode.window.showWarningMessage(
-                `URI scheme links are blocked in SVG previews (e.g. vscode://, file://): ${href}`
+                schemeLinkWarningMessage(href, decision.reason)
             );
             return;
         }
 
         setImmediate(() => {
-            const result = openSchemeHref(href);
+            const result = openSchemeHref(href, readBlockSchemeLinks(), isWorkspaceTrusted());
             if (result === 'invalid') {
                 void vscode.window.showErrorMessage(`Could not open scheme link: ${href}`);
             }
@@ -189,12 +235,12 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
     private handleExternalLink(href: string) {
         if (!href) return;
 
-        if (shouldBlockExternalLink(readExternalLinkPolicy())) {
-            void vscode.window.showWarningMessage(`External link blocked: ${href}`);
+        if (shouldBlockExternalLink(effectiveExternalLinkPolicy())) {
+            const suffix = isWorkspaceTrusted() ? '' : ' (Restricted Mode)';
+            void vscode.window.showWarningMessage(`External link blocked${suffix}: ${href}`);
             return;
         }
 
-        // Defer so we are not inside the webview message handler (avoids host re-entrancy issues).
         setImmediate(() => {
             const result = openHttpExternalHref(href);
             if (result === 'invalid-url') {
@@ -207,7 +253,7 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
         });
     }
 
-    private handleOpenLink(documentUri: vscode.Uri, href: string) {
+    private async handleOpenLink(documentUri: vscode.Uri, href: string) {
         if (!href) return;
 
         if (isNonHttpSchemeHref(href)) {
@@ -222,11 +268,12 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
 
         try {
             const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
+            const workspaceRoot = workspaceFolder?.uri.fsPath;
             const result = resolveRelativeSvgLink(
                 documentUri.fsPath,
                 href,
-                workspaceFolder?.uri.fsPath,
-                readBlockAbsolutePaths()
+                workspaceRoot,
+                effectiveBlockAbsolutePaths()
             );
 
             if (!result.ok) {
@@ -242,7 +289,19 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
                 return;
             }
 
-            let targetUri = vscode.Uri.file(result.targetPath);
+            const verified = await verifyResolvedPathInWorkspace(result.targetPath, workspaceRoot);
+            if (!verified.ok) {
+                if (verified.reason === 'symlink-escape') {
+                    void vscode.window.showErrorMessage(
+                        `Malicious link detected: Symlink target outside workspace is blocked (${href}).`
+                    );
+                } else {
+                    void vscode.window.showErrorMessage(`Failed to open link (path not found): ${href}`);
+                }
+                return;
+            }
+
+            let targetUri = vscode.Uri.file(verified.resolvedPath);
             if (result.fragment) {
                 targetUri = targetUri.with({ fragment: result.fragment });
             }
@@ -257,7 +316,7 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'main.js'));
         const panzoomUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'panzoom.min.js'));
 
-        const scriptPolicy = readScriptPolicy();
+        const scriptPolicy = effectiveScriptPolicy();
         const allowScriptsEffective = this.getEffectiveAllowScripts(uri);
 
         const scriptCsp = buildScriptCsp(allowScriptsEffective, webview.cspSource);

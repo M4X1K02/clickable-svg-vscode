@@ -18,24 +18,52 @@
     const hasScripts = container.getAttribute('data-has-scripts') === 'true';
     const allowScripts = container.getAttribute('data-allow-scripts') === 'true';
 
-    // Only prompt when settings allow it (`prompt` policy); avoids pointless messages when strict/permissive.
     if (scriptPolicy === 'prompt' && hasScripts && !allowScripts) {
         vscode.postMessage({ command: MSG_REQUEST_ALLOW_SCRIPTS });
     }
 
     const stage = container.querySelector('.panzoom-stage');
-    
+
+    function getLinkHref(link) {
+        return link.getAttribute('href') || link.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+    }
+
+    function markPanzoomExcluded(link) {
+        link.classList.add(PANZOOM_EXCLUDE_CLASS);
+    }
+
+    function dispatchLinkHref(href, event) {
+        if (!href) {
+            return;
+        }
+        if (HTTP_SCHEME_RE.test(href)) {
+            event.preventDefault();
+            event.stopPropagation();
+            vscode.postMessage({ command: MSG_OPEN_EXTERNAL_LINK, href: href });
+            return;
+        }
+        if (EXTERNAL_SCHEME_RE.test(href)) {
+            event.preventDefault();
+            event.stopPropagation();
+            vscode.postMessage({ command: MSG_SCHEME_LINK, href: href });
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        vscode.postMessage({ command: MSG_OPEN_LINK, href: href });
+    }
+
     const encodedSvg = stage.getAttribute('data-svg');
     if (encodedSvg) {
         const svgString = atob(encodedSvg);
         const parser = new DOMParser();
-        const doc = parser.parseFromString(svgString, "image/svg+xml");
-        
+        const doc = parser.parseFromString(svgString, 'image/svg+xml');
+
         if (doc.querySelector('parsererror')) {
             stage.innerHTML = '<div style="color: red;">Error parsing SVG</div>';
         } else {
             stage.appendChild(doc.documentElement);
-            
+
             if (allowScripts) {
                 const scripts = stage.querySelectorAll('script');
                 scripts.forEach(s => {
@@ -50,12 +78,8 @@
     const svgElement = stage && stage.querySelector('svg');
 
     if (stage && svgElement) {
-        const links = svgElement.querySelectorAll('a');
-        // Panzoom steals pointer events unless excluded (otherwise clicks feel "stuck")
-        links.forEach(link => link.classList.add(PANZOOM_EXCLUDE_CLASS));
+        stage.querySelectorAll('a').forEach(markPanzoomExcluded);
 
-        // Panzoom on the wrapper div — not the root <svg> — so wheel zoom stays anchored to the cursor
-        // (SVG transform-origin defaults break focal-point math vs HTML elements).
         const panzoom = Panzoom(stage, {
             maxScale: 50,
             minScale: 0.1,
@@ -72,31 +96,28 @@
         document.getElementById('zoom-out').addEventListener('click', panzoom.zoomOut);
         document.getElementById('zoom-reset').addEventListener('click', panzoom.reset);
 
-        links.forEach(link => {
-            link.addEventListener('click', e => {
-                let href = link.getAttribute('href') || link.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
-                if (href) {
-                    if (HTTP_SCHEME_RE.test(href)) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        vscode.postMessage({ command: MSG_OPEN_EXTERNAL_LINK, href: href });
-                        return;
-                    }
-
-                    // Never allow native navigation for vscode://, file://, etc. — it can crash the host
-                    // and bypasses extension sandboxing.
-                    if (EXTERNAL_SCHEME_RE.test(href)) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        vscode.postMessage({ command: MSG_SCHEME_LINK, href: href });
-                        return;
-                    }
-
-                    e.preventDefault();
-                    e.stopPropagation();
-                    vscode.postMessage({ command: MSG_OPEN_LINK, href: href });
-                }
-            });
+        stage.addEventListener('click', event => {
+            const link = event.target.closest('a');
+            if (!link || !stage.contains(link)) {
+                return;
+            }
+            dispatchLinkHref(getLinkHref(link), event);
         });
+
+        const linkObserver = new MutationObserver(mutations => {
+            for (const mutation of mutations) {
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeType !== Node.ELEMENT_NODE) {
+                        return;
+                    }
+                    const element = /** @type {Element} */ (node);
+                    if (element.matches('a')) {
+                        markPanzoomExcluded(element);
+                    }
+                    element.querySelectorAll('a').forEach(markPanzoomExcluded);
+                });
+            }
+        });
+        linkObserver.observe(stage, { childList: true, subtree: true });
     }
 }());

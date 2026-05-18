@@ -9,12 +9,16 @@ const {
     classifyHref,
     resolveRelativeSvgLink,
     getEffectiveAllowScripts,
+    getEffectiveScriptPolicy,
+    getEffectiveExternalLinkPolicy,
+    getEffectiveBlockAbsolutePaths,
     buildScriptCsp,
     svgContainsScriptTag,
     shouldBlockExternalLink,
-    shouldBlockSchemeLinks,
+    evaluateSchemeLink,
     isNonHttpSchemeHref,
     canonicalizeHttpExternalHref,
+    verifyResolvedPathInWorkspace,
     HTTP_SCHEME_RE,
     EXTERNAL_SCHEME_RE,
 } = require('../out/linkSecurity.js');
@@ -166,7 +170,14 @@ describe('script policy', () => {
 
     it('detects embedded script tags in SVG source', () => {
         assert.equal(svgContainsScriptTag('<svg><script>alert(1)</script></svg>'), true);
+        assert.equal(svgContainsScriptTag('<svg><SCRIPT>alert(1)</script></svg>'), true);
         assert.equal(svgContainsScriptTag('<svg><rect/></svg>'), false);
+    });
+
+    it('forces strict script policy in untrusted workspaces', () => {
+        assert.equal(getEffectiveScriptPolicy('permissive', false), 'strict');
+        assert.equal(getEffectiveScriptPolicy('prompt', false), 'strict');
+        assert.equal(getEffectiveScriptPolicy('permissive', true), 'permissive');
     });
 });
 
@@ -175,12 +186,88 @@ describe('external link policy', () => {
         assert.equal(shouldBlockExternalLink('block'), true);
         assert.equal(shouldBlockExternalLink('openExternal'), false);
     });
+
+    it('forces block in untrusted workspaces', () => {
+        assert.equal(getEffectiveExternalLinkPolicy('openExternal', false), 'block');
+        assert.equal(shouldBlockExternalLink(getEffectiveExternalLinkPolicy('openExternal', false)), true);
+    });
 });
 
 describe('scheme link policy', () => {
-    it('blocks scheme links when blockSchemeLinks is enabled (default)', () => {
-        assert.equal(shouldBlockSchemeLinks(true), true);
-        assert.equal(shouldBlockSchemeLinks(false), false);
+    const vscodeHref =
+        'vscode://command/workbench.action.terminal.sendSequence?%5B%7B%22text%22%3A%22touch%20%2Ftmp%2Fpwned%5Cn%22%7D%5D';
+
+    it('blocks all schemes when blockSchemeLinks is enabled (default)', () => {
+        assert.deepEqual(evaluateSchemeLink(vscodeHref, true, true), {
+            action: 'block',
+            reason: 'blocked-by-setting',
+        });
+    });
+
+    it('always blocks vscode even when blockSchemeLinks is disabled', () => {
+        assert.deepEqual(evaluateSchemeLink(vscodeHref, false, true), {
+            action: 'block',
+            reason: 'dangerous-scheme',
+        });
+    });
+
+    it('allows allowlisted schemes when unblocked and trusted', () => {
+        assert.deepEqual(evaluateSchemeLink('file:///tmp/x', false, true), { action: 'open' });
+        assert.deepEqual(evaluateSchemeLink('mailto:a@b.com', false, true), { action: 'open' });
+    });
+
+    it('blocks non-allowlisted schemes when unblocked', () => {
+        assert.deepEqual(evaluateSchemeLink('custom://foo', false, true), {
+            action: 'block',
+            reason: 'not-allowlisted',
+        });
+    });
+
+    it('blocks all schemes in untrusted workspaces', () => {
+        assert.deepEqual(evaluateSchemeLink('file:///tmp/x', false, false), {
+            action: 'block',
+            reason: 'untrusted-workspace',
+        });
+    });
+});
+
+describe('symlink-aware path verification', () => {
+    it('blocks resolved paths that escape the workspace via symlink', async () => {
+        const tmp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'clickable-svg-'));
+        const workspace = path.join(tmp, 'workspace');
+        const outside = path.join(tmp, 'outside');
+        const secret = path.join(outside, 'secret.txt');
+        const linkPath = path.join(workspace, 'link.txt');
+        fs.mkdirSync(workspace, { recursive: true });
+        fs.mkdirSync(outside, { recursive: true });
+        fs.writeFileSync(secret, 'secret');
+        fs.symlinkSync(secret, linkPath);
+
+        const resolved = await verifyResolvedPathInWorkspace(linkPath, workspace);
+        assert.equal(resolved.ok, false);
+        assert.equal(resolved.reason, 'symlink-escape');
+
+        fs.rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it('allows resolved paths inside the workspace', async () => {
+        const tmp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'clickable-svg-'));
+        const workspace = path.join(tmp, 'workspace');
+        const inner = path.join(workspace, 'inner');
+        const file = path.join(inner, 'doc.txt');
+        fs.mkdirSync(inner, { recursive: true });
+        fs.writeFileSync(file, 'ok');
+
+        const resolved = await verifyResolvedPathInWorkspace(file, workspace);
+        assert.equal(resolved.ok, true);
+        assert.equal(resolved.resolvedPath, file);
+
+        fs.rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it('forces block absolute paths in untrusted workspaces', () => {
+        assert.equal(getEffectiveBlockAbsolutePaths(false, false), true);
+        assert.equal(getEffectiveBlockAbsolutePaths(false, true), false);
     });
 });
 
@@ -210,12 +297,12 @@ describe('link matrix security outcomes', () => {
     const workspace = '/home/user/project';
     const matrixSvg = path.join(workspace, 'test-vectors', 'test-link-matrix.svg');
 
-    it('vector 1: vscode:// is a scheme link (blocked when blockSchemeLinks is true)', () => {
+    it('vector 1: vscode:// is always blocked even when scheme links are unblocked', () => {
         const href =
             'vscode://command/workbench.action.terminal.sendSequence?%5B%7B%22text%22%3A%22touch%20%2Ftmp%2Fpwned_by_vscode_uri%5Cn%22%7D%5D';
         assert.equal(classifyHref(href), 'scheme');
         assert.equal(isNonHttpSchemeHref(href), true);
-        assert.equal(shouldBlockSchemeLinks(true), true);
+        assert.equal(evaluateSchemeLink(href, false, true).action, 'block');
     });
 
     it('vector 2: http link is intercepted by extension (http)', () => {

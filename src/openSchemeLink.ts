@@ -1,15 +1,29 @@
 import * as vscode from 'vscode';
-import { classifyHref } from './linkSecurity';
+import { classifyHref, evaluateSchemeLink, getHrefScheme, isSchemeAlwaysBlocked } from './linkSecurity';
 
-export type OpenSchemeHrefResult = 'opened' | 'invalid';
+export type OpenSchemeHrefResult = 'opened' | 'invalid' | 'blocked';
 
 /**
  * Open non-http(s) scheme URIs via the extension host (never the webview).
- * User must opt in via `clickableSvg.blockSchemeLinks: false`.
+ * Caller must pass evaluateSchemeLink result; this re-checks as defense in depth.
  */
-export function openSchemeHref(href: string): OpenSchemeHrefResult {
+export function openSchemeHref(
+    href: string,
+    blockSchemeLinks: boolean,
+    workspaceTrusted: boolean
+): OpenSchemeHrefResult {
     if (classifyHref(href) !== 'scheme') {
         return 'invalid';
+    }
+
+    const decision = evaluateSchemeLink(href, blockSchemeLinks, workspaceTrusted);
+    if (decision.action === 'block') {
+        return 'blocked';
+    }
+
+    const scheme = getHrefScheme(href);
+    if (!scheme || isSchemeAlwaysBlocked(scheme)) {
+        return 'blocked';
     }
 
     try {
