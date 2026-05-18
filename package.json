@@ -1,7 +1,7 @@
 {
   "name": "clickable-svg-vscode",
   "displayName": "Clickable SVG Viewer",
-  "publisher": "clickable-svg-local",
+  "publisher": "Maxiik",
   "repository": {
     "type": "git",
     "url": "https://github.com/M4X1K02/clickable-svg-vscode.git"
