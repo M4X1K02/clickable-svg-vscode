@@ -1,30 +1,33 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import { spawn } from 'child_process';
+import {
+    buildScriptCsp,
+    classifyHref,
+    getEffectiveAllowScripts as computeAllowScripts,
+    isNonHttpSchemeHref,
+    resolveRelativeSvgLink,
+    shouldBlockExternalLink,
+    shouldBlockSchemeLinks,
+    svgContainsScriptTag,
+} from './linkSecurity';
+import { openHttpExternalHref } from './openExternalBrowser';
+import { openSchemeHref } from './openSchemeLink';
 
 const CONFIG_SECTION = 'clickableSvg' as const;
 const KEY_SCRIPT_POLICY = 'scriptPolicy' as const;
 const KEY_EXTERNAL_LINK_POLICY = 'externalLinkPolicy' as const;
+const KEY_BLOCK_ABSOLUTE_PATHS = 'blockAbsolutePaths' as const;
+const KEY_BLOCK_SCHEME_LINKS = 'blockSchemeLinks' as const;
+
+const MSG_OPEN_LINK = 'openLink' as const;
+const MSG_OPEN_EXTERNAL_LINK = 'openExternalLink' as const;
+const MSG_SCHEME_LINK = 'schemeLink' as const;
+const MSG_REQUEST_ALLOW_SCRIPTS = 'requestAllowScripts' as const;
 
 type ScriptPolicy = 'strict' | 'prompt' | 'permissive';
 type ExternalLinkPolicy = 'block' | 'openExternal';
 
 const SCRIPT_POLICIES: readonly ScriptPolicy[] = ['strict', 'prompt', 'permissive'];
 const EXTERNAL_LINK_POLICIES: readonly ExternalLinkPolicy[] = ['block', 'openExternal'];
-
-/**
- * Open http(s) URLs via a detached OS process. On some Linux/Cursor builds,
- * `vscode.env.openExternal` never settles and can wedge the extension host.
- */
-function openExternalHttpDetached(canonicalHref: string): void {
-    if (process.platform === 'win32') {
-        spawn('cmd', ['/c', 'start', '', canonicalHref], { detached: true, stdio: 'ignore' }).unref();
-    } else if (process.platform === 'darwin') {
-        spawn('open', [canonicalHref], { detached: true, stdio: 'ignore' }).unref();
-    } else {
-        spawn('xdg-open', [canonicalHref], { detached: true, stdio: 'ignore' }).unref();
-    }
-}
 
 function readScriptPolicy(): ScriptPolicy {
     const raw = vscode.workspace.getConfiguration(CONFIG_SECTION).get<string>(KEY_SCRIPT_POLICY);
@@ -33,9 +36,15 @@ function readScriptPolicy(): ScriptPolicy {
 
 function readExternalLinkPolicy(): ExternalLinkPolicy {
     const raw = vscode.workspace.getConfiguration(CONFIG_SECTION).get<string>(KEY_EXTERNAL_LINK_POLICY);
-    return EXTERNAL_LINK_POLICIES.includes(raw as ExternalLinkPolicy)
-        ? (raw as ExternalLinkPolicy)
-        : 'block';
+    return EXTERNAL_LINK_POLICIES.includes(raw as ExternalLinkPolicy) ? (raw as ExternalLinkPolicy) : 'block';
+}
+
+function readBlockAbsolutePaths(): boolean {
+    return vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(KEY_BLOCK_ABSOLUTE_PATHS, true);
+}
+
+function readBlockSchemeLinks(): boolean {
+    return vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(KEY_BLOCK_SCHEME_LINKS, true);
 }
 
 export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvider {
@@ -88,14 +97,7 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
     private panels = new Map<string, vscode.WebviewPanel>();
 
     private getEffectiveAllowScripts(uri: vscode.Uri): boolean {
-        const policy = readScriptPolicy();
-        if (policy === 'permissive') {
-            return true;
-        }
-        if (policy === 'strict') {
-            return false;
-        }
-        return this.allowedScripts.has(uri.toString());
+        return computeAllowScripts(readScriptPolicy(), uri.toString(), this.allowedScripts);
     }
 
     public async openCustomDocument(
@@ -126,10 +128,16 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
 
         webviewPanel.webview.onDidReceiveMessage(e => {
             switch (e.command) {
-                case 'openLink':
+                case MSG_OPEN_LINK:
                     this.handleOpenLink(document.uri, e.href);
                     return;
-                case 'requestAllowScripts':
+                case MSG_OPEN_EXTERNAL_LINK:
+                    this.handleExternalLink(e.href);
+                    return;
+                case MSG_SCHEME_LINK:
+                    this.handleSchemeLink(e.href);
+                    return;
+                case MSG_REQUEST_ALLOW_SCRIPTS:
                     if (readScriptPolicy() !== 'prompt') {
                         return;
                     }
@@ -158,57 +166,89 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
         }
     }
 
-    private handleOpenLink(documentUri: vscode.Uri, href: string) {
+    private handleSchemeLink(href: string) {
+        if (!href) {
+            return;
+        }
+
+        if (shouldBlockSchemeLinks(readBlockSchemeLinks())) {
+            void vscode.window.showWarningMessage(
+                `URI scheme links are blocked in SVG previews (e.g. vscode://, file://): ${href}`
+            );
+            return;
+        }
+
+        setImmediate(() => {
+            const result = openSchemeHref(href);
+            if (result === 'invalid') {
+                void vscode.window.showErrorMessage(`Could not open scheme link: ${href}`);
+            }
+        });
+    }
+
+    private handleExternalLink(href: string) {
         if (!href) return;
 
-        if (href.startsWith('http://') || href.startsWith('https://')) {
-            const policy = readExternalLinkPolicy();
-            if (policy === 'block') {
-                void vscode.window.showWarningMessage(`External link blocked: ${href}`);
-                return;
-            }
-            let canonicalHref: string;
-            try {
-                const u = new URL(href);
-                if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-                    void vscode.window.showErrorMessage(`Unsupported external URL scheme: ${href}`);
-                    return;
-                }
-                canonicalHref = u.href;
-            } catch {
+        if (shouldBlockExternalLink(readExternalLinkPolicy())) {
+            void vscode.window.showWarningMessage(`External link blocked: ${href}`);
+            return;
+        }
+
+        // Defer so we are not inside the webview message handler (avoids host re-entrancy issues).
+        setImmediate(() => {
+            const result = openHttpExternalHref(href);
+            if (result === 'invalid-url') {
                 void vscode.window.showErrorMessage(`Could not open external link: ${href}`);
                 return;
             }
+            if (result === 'spawn-failed') {
+                void vscode.window.showErrorMessage(`Could not launch browser for: ${href}`);
+            }
+        });
+    }
 
-            void Promise.resolve().then(() => {
-                try {
-                    openExternalHttpDetached(canonicalHref);
-                } catch {
-                    void vscode.window.showErrorMessage(`Could not launch browser for: ${canonicalHref}`);
-                }
-            });
+    private handleOpenLink(documentUri: vscode.Uri, href: string) {
+        if (!href) return;
+
+        if (isNonHttpSchemeHref(href)) {
+            this.handleSchemeLink(href);
+            return;
+        }
+
+        if (classifyHref(href) === 'http') {
+            this.handleExternalLink(href);
             return;
         }
 
         try {
-            let targetUri: vscode.Uri;
+            const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
+            const result = resolveRelativeSvgLink(
+                documentUri.fsPath,
+                href,
+                workspaceFolder?.uri.fsPath,
+                readBlockAbsolutePaths()
+            );
 
-            if (href.startsWith('vscode://')) {
-                targetUri = vscode.Uri.parse(href);
-            } else {
-                const [urlPath, fragment] = href.split('#');
-
-                const dir = path.dirname(documentUri.fsPath);
-                const targetPath = path.resolve(dir, urlPath);
-                targetUri = vscode.Uri.file(targetPath);
-
-                if (fragment) {
-                    targetUri = targetUri.with({ fragment });
+            if (!result.ok) {
+                if (result.reason === 'absolute-path') {
+                    void vscode.window.showErrorMessage(
+                        `Malicious link detected: Absolute paths are not allowed in SVG links (${result.urlPath}).`
+                    );
+                } else {
+                    void vscode.window.showErrorMessage(
+                        `Malicious link detected: Directory traversal outside workspace is blocked (${result.urlPath}).`
+                    );
                 }
+                return;
+            }
+
+            let targetUri = vscode.Uri.file(result.targetPath);
+            if (result.fragment) {
+                targetUri = targetUri.with({ fragment: result.fragment });
             }
 
             void vscode.commands.executeCommand('vscode.open', targetUri);
-        } catch (e) {
+        } catch {
             void vscode.window.showErrorMessage(`Failed to open link: ${href}`);
         }
     }
@@ -220,9 +260,11 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
         const scriptPolicy = readScriptPolicy();
         const allowScriptsEffective = this.getEffectiveAllowScripts(uri);
 
-        const scriptCsp = allowScriptsEffective ? `'unsafe-inline' ${webview.cspSource}` : webview.cspSource;
+        const scriptCsp = buildScriptCsp(allowScriptsEffective, webview.cspSource);
 
-        const hasScripts = svgContent.includes('<script');
+        const hasScripts = svgContainsScriptTag(svgContent);
+
+        const encodedSvg = Buffer.from(svgContent).toString('base64');
 
         return `
             <!DOCTYPE html>
@@ -286,7 +328,7 @@ export class SvgCustomEditorProvider implements vscode.CustomReadonlyEditorProvi
             </head>
             <body>
                 <div id="svg-container" data-script-policy="${scriptPolicy}" data-has-scripts="${hasScripts}" data-allow-scripts="${allowScriptsEffective}">
-                    <div class="panzoom-stage">${svgContent}</div>
+                    <div class="panzoom-stage" id="stage" data-svg="${encodedSvg}"></div>
                 </div>
                 <div class="controls">
                     <button id="zoom-in">+</button>

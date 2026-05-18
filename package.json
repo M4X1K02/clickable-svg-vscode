@@ -2,6 +2,10 @@
   "name": "clickable-svg-vscode",
   "displayName": "Clickable SVG Viewer",
   "publisher": "clickable-svg-local",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/M4X1K02/clickable-svg-vscode.git"
+  },
   "license": "MIT",
   "description": "SVG viewer that supports clickable relative links to open files in VS Code.",
   "version": "0.0.1",
@@ -39,6 +43,32 @@
       {
         "title": "Clickable SVG",
         "properties": {
+          "clickableSvg.externalLinkPolicy": {
+            "type": "string",
+            "default": "block",
+            "enum": [
+              "block",
+              "openExternal"
+            ],
+            "enumDescriptions": [
+              "Show a warning and do nothing when an SVG link points to an http/https URL.",
+              "Open http/https links in the system default browser."
+            ],
+            "markdownDescription": "How `http`/`https` links inside SVG previews are handled.",
+            "scope": "window"
+          },
+          "clickableSvg.blockAbsolutePaths": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "When enabled, SVG links that use absolute filesystem paths (e.g. `/etc/passwd`) are blocked. Relative links and workspace traversal rules still apply when disabled.",
+            "scope": "window"
+          },
+          "clickableSvg.blockSchemeLinks": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "When enabled, non-http(s) URI schemes (`vscode://`, `file://`, etc.) are blocked. When disabled, they are opened via the extension host (not the webview). **Unsafe** for untrusted SVGs — `vscode://` links can run editor commands.",
+            "scope": "window"
+          },
           "clickableSvg.scriptPolicy": {
             "type": "string",
             "default": "prompt",
@@ -54,20 +84,6 @@
             ],
             "markdownDescription": "How embedded `<script>` tags inside SVG previews are handled. **permissive** is unsafe if you open SVGs from untrusted sources.",
             "scope": "window"
-          },
-          "clickableSvg.externalLinkPolicy": {
-            "type": "string",
-            "default": "block",
-            "enum": [
-              "block",
-              "openExternal"
-            ],
-            "enumDescriptions": [
-              "Show a warning and do not open `http`/`https` links from SVG anchors.",
-              "Open `http`/`https` links in the system browser."
-            ],
-            "markdownDescription": "Behavior when clicking an SVG link with an `http://` or `https://` URL.",
-            "scope": "window"
           }
         }
       }
@@ -77,9 +93,9 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "vsix": "npm run compile && vsce package --allow-missing-repository",
+    "vsix": "npm run compile && vsce package",
     "pretest": "npm run compile",
-    "test": "node ./out/test/runTest.js"
+    "test": "node --test test/security.test.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.80.0",

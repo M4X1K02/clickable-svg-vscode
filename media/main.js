@@ -1,5 +1,11 @@
 (function() {
     const PANZOOM_EXCLUDE_CLASS = 'panzoom-exclude';
+    const MSG_OPEN_LINK = 'openLink';
+    const MSG_OPEN_EXTERNAL_LINK = 'openExternalLink';
+    const MSG_SCHEME_LINK = 'schemeLink';
+    const MSG_REQUEST_ALLOW_SCRIPTS = 'requestAllowScripts';
+    const EXTERNAL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+    const HTTP_SCHEME_RE = /^https?:/i;
 
     const vscode = acquireVsCodeApi();
 
@@ -14,10 +20,33 @@
 
     // Only prompt when settings allow it (`prompt` policy); avoids pointless messages when strict/permissive.
     if (scriptPolicy === 'prompt' && hasScripts && !allowScripts) {
-        vscode.postMessage({ command: 'requestAllowScripts' });
+        vscode.postMessage({ command: MSG_REQUEST_ALLOW_SCRIPTS });
     }
 
     const stage = container.querySelector('.panzoom-stage');
+    
+    const encodedSvg = stage.getAttribute('data-svg');
+    if (encodedSvg) {
+        const svgString = atob(encodedSvg);
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(svgString, "image/svg+xml");
+        
+        if (doc.querySelector('parsererror')) {
+            stage.innerHTML = '<div style="color: red;">Error parsing SVG</div>';
+        } else {
+            stage.appendChild(doc.documentElement);
+            
+            if (allowScripts) {
+                const scripts = stage.querySelectorAll('script');
+                scripts.forEach(s => {
+                    const newScript = document.createElement('script');
+                    newScript.textContent = s.textContent;
+                    document.body.appendChild(newScript);
+                });
+            }
+        }
+    }
+
     const svgElement = stage && stage.querySelector('svg');
 
     if (stage && svgElement) {
@@ -45,11 +74,27 @@
 
         links.forEach(link => {
             link.addEventListener('click', e => {
-                e.preventDefault();
-                e.stopPropagation();
                 let href = link.getAttribute('href') || link.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
                 if (href) {
-                    vscode.postMessage({ command: 'openLink', href: href });
+                    if (HTTP_SCHEME_RE.test(href)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        vscode.postMessage({ command: MSG_OPEN_EXTERNAL_LINK, href: href });
+                        return;
+                    }
+
+                    // Never allow native navigation for vscode://, file://, etc. — it can crash the host
+                    // and bypasses extension sandboxing.
+                    if (EXTERNAL_SCHEME_RE.test(href)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        vscode.postMessage({ command: MSG_SCHEME_LINK, href: href });
+                        return;
+                    }
+
+                    e.preventDefault();
+                    e.stopPropagation();
+                    vscode.postMessage({ command: MSG_OPEN_LINK, href: href });
                 }
             });
         });
